@@ -1,0 +1,3 @@
+{"type":"assistant","uuid":"msg-fixture-1","timestamp":"2026-07-20T10:00:00Z","message":{"id":"msg-fixture-1","role":"assistant","model":"claude-sonnet-4-20250514","usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":800,"cache_creation_input_tokens":100}}}
+{"type":"user","message":{"role":"user","content":"hello"}}
+{"type":"assistant","uuid":"msg-fixture-2","timestamp":"2026-07-20T10:01:00Z","message":{"id":"msg-fixture-2","role":"assistant","model":"claude-sonnet-4-20250514","usage":{"input_tokens":500,"output_tokens":100,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

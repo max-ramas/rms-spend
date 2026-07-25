@@ -1,0 +1,8 @@
+<!-- RMS-MEMORY-START -->
+## RMS Memory MCP Integration
+You are connected to the **RMS Memory MCP Server**, your external brain for this project.
+
+1. **Search First:** Use the `rms-memory_rms_search` tool to find past decisions before substantial changes.
+2. **Persist Knowledge:** Use `rms-memory_rms_write` with relative paths only (e.g. `architecture/decision.md`).
+3. Pass `project: "rms-spend"` if the MCP client did not bind a workspace root.
+<!-- RMS-MEMORY-END -->
