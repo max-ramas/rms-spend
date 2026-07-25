@@ -48,6 +48,8 @@ pub struct ScanOptions {
     pub windsurf_state: Option<PathBuf>,
     /// When true, ignore connector enable flags (still respects `--only`).
     pub force_all_enabled: bool,
+    /// Opt-in outbound network for collectors that support it (Windsurf GetUserStatus).
+    pub allow_network: bool,
 }
 
 impl ScanOptions {
@@ -92,7 +94,10 @@ pub struct StatusReport {
     pub connectors: ConnectorConfig,
 }
 
-fn build_collectors(opts: &ScanOptions) -> Result<Vec<Box<dyn SpendCollector>>> {
+fn build_collectors(
+    opts: &ScanOptions,
+    connectors: &ConnectorConfig,
+) -> Result<Vec<Box<dyn SpendCollector>>> {
     let only = if opts.only.is_empty() {
         "all"
     } else {
@@ -207,7 +212,8 @@ fn build_collectors(opts: &ScanOptions) -> Result<Vec<Box<dyn SpendCollector>>> 
                 crate::paths::windsurf_next_state_vscdb(),
             ]
         };
-        collectors.push(Box::new(WindsurfCollector::new(dbs)));
+        let windsurf_net = opts.allow_network || connectors.network_allowed("windsurf");
+        collectors.push(Box::new(WindsurfCollector::new(dbs).with_network(windsurf_net)));
     }
 
     if collectors.is_empty() {
@@ -225,7 +231,7 @@ pub fn scan(paths: &SpendPaths, opts: ScanOptions) -> Result<ScanReport> {
     let ledger = Ledger::open(&paths.ledger_db)?;
     let tariffs = TariffBundle::load_or_builtin(&paths.tariffs_json);
     let connectors = ConnectorConfig::load_or_default(&paths.connectors_json);
-    let collectors = build_collectors(&opts)?;
+    let collectors = build_collectors(&opts, &connectors)?;
 
     let mut reports = Vec::with_capacity(collectors.len());
     for c in &collectors {
@@ -300,6 +306,7 @@ pub struct TraySourceLine {
     pub events: usize,
     pub cost_usd: Option<f64>,
     pub is_proxy: bool,
+    pub is_quota: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -376,7 +383,7 @@ pub fn tray_snapshot(paths: &SpendPaths) -> Result<TraySpendSnapshot> {
         .iter()
         .filter(|(_, b)| b.events > 0)
         .map(|(id, b)| {
-            let tokens = if b.is_proxy {
+            let tokens = if b.is_proxy || b.is_quota {
                 b.input_tokens + b.output_tokens
             } else {
                 b.input_tokens + b.output_tokens + b.cache_read_tokens + b.cache_write_tokens
@@ -387,10 +394,18 @@ pub fn tray_snapshot(paths: &SpendPaths) -> Result<TraySpendSnapshot> {
                 events: b.events,
                 cost_usd: b.cost_usd,
                 is_proxy: b.is_proxy,
+                is_quota: b.is_quota,
             }
         })
         .collect();
-    today_sources.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.id.cmp(&b.id)));
+    // Prefer token consumers first in tray ordering.
+    today_sources.sort_by(|a, b| {
+        let rank = |s: &TraySourceLine| if s.is_proxy || s.is_quota { 1 } else { 0 };
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| b.tokens.cmp(&a.tokens))
+            .then_with(|| a.id.cmp(&b.id))
+    });
 
     Ok(TraySpendSnapshot {
         today_tokens: today.total_tokens,
@@ -509,4 +524,56 @@ pub fn set_connector_enabled(
     cfg.set_enabled(id, enabled);
     save_connectors(paths, &cfg)?;
     Ok(cfg)
+}
+
+pub fn set_connector_network(
+    paths: &SpendPaths,
+    id: &str,
+    allow: bool,
+) -> Result<ConnectorConfig> {
+    let mut cfg = load_connectors(paths);
+    if !crate::connectors::KNOWN_COLLECTORS.contains(&id) {
+        bail!("unknown connector: {id}");
+    }
+    cfg.set_network_allowed(id, allow);
+    save_connectors(paths, &cfg)?;
+    Ok(cfg)
+}
+
+/// First-run onboarding: dirs, builtin tariffs, default connectors.
+pub fn init_spend(paths: &SpendPaths) -> Result<InitReport> {
+    paths.ensure_base()?;
+    let tariffs_wrote = if !paths.tariffs_json.exists() {
+        init_tariffs(paths, false)?;
+        true
+    } else {
+        false
+    };
+    let connectors_wrote = if !paths.connectors_json.exists() {
+        ConnectorConfig::default().save(&paths.connectors_json)?;
+        true
+    } else {
+        false
+    };
+    Ok(InitReport {
+        home: paths.base_dir.display().to_string(),
+        ledger_db: paths.ledger_db.display().to_string(),
+        tariffs_json: paths.tariffs_json.display().to_string(),
+        connectors_json: paths.connectors_json.display().to_string(),
+        budget_json: paths.budget_json.display().to_string(),
+        tariffs_wrote,
+        connectors_wrote,
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitReport {
+    pub home: String,
+    pub ledger_db: String,
+    pub tariffs_json: String,
+    pub connectors_json: String,
+    pub budget_json: String,
+    pub tariffs_wrote: bool,
+    pub connectors_wrote: bool,
 }

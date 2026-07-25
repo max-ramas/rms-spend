@@ -224,3 +224,40 @@ fn find_timestamp(v: &serde_json::Value) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_home_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = GeminiCliCollector::new(PathBuf::from("/no/gemini"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+    }
+
+    #[test]
+    fn parses_usage_metadata() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("session.jsonl");
+        std::fs::write(
+            &f,
+            r#"{"model":"gemini-2.5-pro","created_at":"2026-02-01T12:00:00Z","usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":20,"cachedContentTokenCount":5}}
+"#,
+        )
+        .unwrap();
+        // collector walks gemini home recursively — put file under home
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = GeminiCliCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input_tokens, 100);
+        assert_eq!(r.events[0].output_tokens, 20);
+        assert_eq!(r.events[0].cache_read_tokens, 5);
+    }
+}

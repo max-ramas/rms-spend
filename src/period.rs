@@ -4,6 +4,9 @@ use anyhow::{bail, Result};
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Inclusive UTC time bounds; `(None, None)` means no filter.
+pub type UtcBounds = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PeriodPreset {
@@ -88,7 +91,7 @@ impl PeriodFilter {
     }
 
     /// Resolve to inclusive UTC bounds. `None`/`None` means no filter (`All`).
-    pub fn bounds(&self) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
+    pub fn bounds(&self) -> Result<UtcBounds> {
         match self.preset {
             PeriodPreset::All => Ok((None, None)),
             PeriodPreset::Today => {

@@ -73,9 +73,7 @@ impl SyncConfig {
                 return Some(s);
             }
         }
-        self.register_secret
-            .clone()
-            .filter(|s| !s.is_empty())
+        self.register_secret.clone().filter(|s| !s.is_empty())
     }
 }
 

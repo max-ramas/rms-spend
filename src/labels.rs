@@ -5,7 +5,7 @@ pub fn source_label(id: &str) -> String {
     match id {
         "claude_code" => "Claude Code".into(),
         "rms_memory" => "RMS Memory".into(),
-        "cursor_proxy" => "Cursor".into(),
+        "cursor_proxy" => "Cursor (lines)".into(),
         "cursor_quota" => "Cursor Quota".into(),
         "rms_threads" => "RMS Threads".into(),
         "opencode" => "OpenCode".into(),
@@ -35,7 +35,7 @@ pub fn known_collectors() -> &'static [(&'static str, &'static str)] {
     &[
         ("claude_code", "Claude Code"),
         ("rms_memory", "RMS Memory"),
-        ("cursor_proxy", "Cursor"),
+        ("cursor_proxy", "Cursor (lines)"),
         ("cursor_quota", "Cursor Quota"),
         ("rms_threads", "RMS Threads"),
         ("opencode", "OpenCode"),

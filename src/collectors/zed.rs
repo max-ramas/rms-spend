@@ -3,6 +3,11 @@
 //! Thread blobs are zstd-compressed JSON (`data_type = "zstd"`) with
 //! `request_token_usage` / `cumulative_token_usage`. Older builds may store
 //! plain JSON (`data_type = "json"`).
+//!
+//! **Timestamps:** Zed does not export per-request message timestamps in current
+//! thread blobs (User messages have `id`/`content` only). Every event therefore
+//! uses the thread `updated_at`. Usage map keys do match User message ids — we
+//! can join them for identity checks without storing message content.
 
 use super::util::{event_id, parse_rfc3339_or};
 use super::SpendCollector;
@@ -57,8 +62,7 @@ impl SpendCollector for ZedCollector {
             });
         }
 
-        let mut stmt =
-            conn.prepare("SELECT id, updated_at, data_type, data FROM threads")?;
+        let mut stmt = conn.prepare("SELECT id, updated_at, data_type, data FROM threads")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -120,6 +124,30 @@ struct ZedThread {
     request_token_usage: HashMap<String, ZedUsage>,
     #[serde(default)]
     cumulative_token_usage: Option<ZedUsage>,
+    /// Optional messages — only `User.id` is read for usage-key join tests.
+    #[serde(default)]
+    #[allow(dead_code)]
+    messages: Vec<ZedMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+#[allow(dead_code)]
+enum ZedMessage {
+    User {
+        #[serde(rename = "User")]
+        user: ZedUserMsg,
+    },
+    Other(serde_json::Value),
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ZedUserMsg {
+    id: String,
+    /// Content intentionally ignored — never stored in ledger events.
+    #[serde(default)]
+    content: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -298,22 +326,16 @@ mod tests {
     #[test]
     fn request_map_and_cumulative_remainder() {
         let thread: ZedThread = serde_json::from_str(&sample_thread_json()).unwrap();
-        let events = events_from_thread(
-            "t1",
-            "2026-04-07T15:04:44.456738+00:00",
-            &thread,
-        );
+        let events = events_from_thread("t1", "2026-04-07T15:04:44.456738+00:00", &thread);
         assert_eq!(events.len(), 3); // 2 requests + remainder
-        // remainder: in 200-110=90, out 30-25=5, cache_read 0, cache_write 7
+                                     // remainder: in 200-110=90, out 30-25=5, cache_read 0, cache_write 7
         let rem = events
             .iter()
             .find(|e| e.input_tokens == 90 && e.cache_write_tokens == 7)
             .expect("remainder");
         assert_eq!(rem.output_tokens, 5);
         assert!(events.iter().all(|e| e.accuracy == Accuracy::Exact));
-        assert!(events
-            .iter()
-            .all(|e| e.model == "qwen/qwen3.6-plus:free"));
+        assert!(events.iter().all(|e| e.model == "qwen/qwen3.6-plus:free"));
     }
 
     #[test]
@@ -348,11 +370,7 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO threads (id, updated_at, data_type, data) VALUES (?1, ?2, 'zstd', ?3)",
-            rusqlite::params![
-                "thread-1",
-                "2026-04-07T15:04:44Z",
-                compressed
-            ],
+            rusqlite::params!["thread-1", "2026-04-07T15:04:44Z", compressed],
         )
         .unwrap();
         drop(conn);
@@ -384,5 +402,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn usage_keys_match_user_message_ids_without_storing_content() {
+        let json = r#"{
+            "model": {"model": "m"},
+            "messages": [
+                {"User": {"id": "msg-a", "content": [{"Text": "secret prompt"}]}},
+                {"Agent": {"id": "agent-1", "content": []}}
+            ],
+            "request_token_usage": {
+                "msg-a": {"input_tokens": 5, "output_tokens": 1}
+            },
+            "cumulative_token_usage": {}
+        }"#;
+        let thread: ZedThread = serde_json::from_str(json).unwrap();
+        let user_ids: Vec<_> = thread
+            .messages
+            .iter()
+            .filter_map(|m| match m {
+                ZedMessage::User { user } => Some(user.id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(user_ids, vec!["msg-a"]);
+        assert!(thread.request_token_usage.contains_key("msg-a"));
+        let events = events_from_thread("t", "2026-01-01T00:00:00Z", &thread);
+        assert_eq!(events.len(), 1);
+        // Ledger events must not carry prompt text.
+        let dumped = serde_json::to_string(&events[0]).unwrap();
+        assert!(!dumped.contains("secret prompt"));
     }
 }

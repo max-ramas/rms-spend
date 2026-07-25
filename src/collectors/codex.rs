@@ -214,3 +214,49 @@ struct TokenUsage {
     cache_write_input_tokens: Option<u64>,
     reasoning_output_tokens: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_dir_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = CodexCollector::new(PathBuf::from("/no/codex"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+        assert!(r.events.is_empty());
+    }
+
+    #[test]
+    fn parses_token_count_event() {
+        let dir = TempDir::new().unwrap();
+        let sess = dir.path().join("sess");
+        std::fs::create_dir_all(&sess).unwrap();
+        let path = sess.join("rollout-demo.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"timestamp":"2026-01-01T00:00:00Z","type":"session_meta","payload":{"model_provider":"openai","cwd":"/tmp/p"}}
+{"timestamp":"2026-01-01T00:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":5,"cached_input_tokens":2}}}}
+"#,
+        )
+        .unwrap();
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = CodexCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input_tokens, 10);
+        assert_eq!(r.events[0].output_tokens, 5);
+        assert_eq!(r.events[0].cache_read_tokens, 2);
+        assert_eq!(r.events[0].model, "openai");
+        // incremental: second scan yields 0
+        let r2 = CodexCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert!(r2.events.is_empty());
+    }
+}

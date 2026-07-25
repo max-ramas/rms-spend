@@ -11,6 +11,8 @@ pub enum Accuracy {
     Estimated,
     /// Non-token proxy (Cursor line stats, context %).
     Proxy,
+    /// Subscription / credit quota units (not API tokens).
+    Quota,
 }
 
 impl Accuracy {
@@ -19,6 +21,7 @@ impl Accuracy {
             Self::Exact => "exact",
             Self::Estimated => "estimated",
             Self::Proxy => "proxy",
+            Self::Quota => "quota",
         }
     }
 
@@ -27,8 +30,14 @@ impl Accuracy {
             "exact" => Some(Self::Exact),
             "estimated" => Some(Self::Estimated),
             "proxy" => Some(Self::Proxy),
+            "quota" => Some(Self::Quota),
             _ => None,
         }
+    }
+
+    /// Counts toward API token totals / cost rollups.
+    pub fn is_billable(self) -> bool {
+        matches!(self, Self::Exact | Self::Estimated)
     }
 }
 
@@ -63,9 +72,10 @@ impl SpendEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollectorStatus {
+    #[default]
     Ok,
     Stale,
     Partial,
@@ -109,10 +119,4 @@ pub struct CollectorResult {
     pub status: CollectorStatus,
     pub message: Option<String>,
     pub schema_fingerprint: Option<String>,
-}
-
-impl Default for CollectorStatus {
-    fn default() -> Self {
-        Self::Ok
-    }
 }

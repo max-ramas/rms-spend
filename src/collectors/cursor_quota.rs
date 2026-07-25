@@ -144,7 +144,7 @@ fn parse_quota_value(key: &str, raw: &str) -> Option<SpendEvent> {
         cache_write_tokens: 0,
         cost_usd: None,
         currency: "USD".into(),
-        accuracy: Accuracy::Exact,
+        accuracy: Accuracy::Quota,
         occurred_at: Utc::now(),
         session_id: Some(key.to_string()),
         project_slug: Some("quota".into()),
@@ -153,7 +153,7 @@ fn parse_quota_value(key: &str, raw: &str) -> Option<SpendEvent> {
 
 pub fn make_event_id(key: &str, remaining: u64) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"cursor_quota\0");
+    hasher.update(b"cursor_quota_v1\0");
     hasher.update(key.as_bytes());
     hasher.update(b"\0");
     hasher.update(&remaining.to_le_bytes());
@@ -181,7 +181,7 @@ mod tests {
     fn parses_quota_json() {
         let ev = parse_quota_value("cursor.premium", r#"{"premiumRequestsRemaining":42}"#).unwrap();
         assert_eq!(ev.output_tokens, 42);
-        assert_eq!(ev.accuracy, Accuracy::Exact);
+        assert_eq!(ev.accuracy, Accuracy::Quota);
     }
 
     #[test]

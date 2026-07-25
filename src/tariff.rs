@@ -458,7 +458,10 @@ impl TariffBundle {
 
     pub fn apply_costs(&self, events: &mut [SpendEvent]) {
         for e in events {
-            if e.accuracy == crate::event::Accuracy::Proxy {
+            if matches!(
+                e.accuracy,
+                crate::event::Accuracy::Proxy | crate::event::Accuracy::Quota
+            ) {
                 e.cost_usd = None;
                 continue;
             }
@@ -474,7 +477,10 @@ impl TariffBundle {
     pub fn fill_missing_costs(&self, events: &mut [SpendEvent]) -> usize {
         let mut filled = 0usize;
         for e in events {
-            if e.accuracy == crate::event::Accuracy::Proxy {
+            if matches!(
+                e.accuracy,
+                crate::event::Accuracy::Proxy | crate::event::Accuracy::Quota
+            ) {
                 continue;
             }
             if e.cost_usd.is_some() {

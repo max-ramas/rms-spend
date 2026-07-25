@@ -7,6 +7,7 @@ pub struct SpendPaths {
     pub ledger_db: PathBuf,
     pub tariffs_json: PathBuf,
     pub connectors_json: PathBuf,
+    pub budget_json: PathBuf,
     pub raw_audit_dir: PathBuf,
 }
 
@@ -23,12 +24,14 @@ impl SpendPaths {
         let ledger_db = base_dir.join("spend.db");
         let tariffs_json = base_dir.join("spend-tariffs.json");
         let connectors_json = base_dir.join("spend-connectors.json");
+        let budget_json = base_dir.join("spend-budget.json");
         let raw_audit_dir = base_dir.join("spend-raw");
         Self {
             base_dir,
             ledger_db,
             tariffs_json,
             connectors_json,
+            budget_json,
             raw_audit_dir,
         }
     }

@@ -327,7 +327,7 @@ mod tests {
             session_id: Some("s1".into()),
             project_slug: None,
         };
-        ledger.upsert_events(&[ev.clone()]).unwrap();
+        ledger.upsert_events(std::slice::from_ref(&ev)).unwrap();
         ledger.upsert_events(&[ev]).unwrap();
         assert_eq!(ledger.event_count().unwrap(), 1);
     }

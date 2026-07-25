@@ -93,16 +93,22 @@ fn scan_conversation_db(path: &Path) -> anyhow::Result<Vec<SpendEvent>> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
 
-    let mut stmt = conn.prepare("SELECT idx, data FROM gen_metadata ORDER BY idx")?;
+    let mut stmt = conn.prepare(
+        "SELECT g.idx, g.data, s.metadata
+         FROM gen_metadata g
+         LEFT JOIN steps s ON s.idx = g.idx
+         ORDER BY g.idx",
+    )?;
     let rows = stmt.query_map([], |row| {
         let idx: i64 = row.get(0)?;
         let data: Vec<u8> = row.get(1)?;
-        Ok((idx, data))
+        let step_meta: Option<Vec<u8>> = row.get(2)?;
+        Ok((idx, data, step_meta))
     })?;
 
     let mut events = Vec::new();
     for row in rows {
-        let (idx, data) = row?;
+        let (idx, data, step_meta) = row?;
         let Some((input, output, cache)) = extract_usage(&data) else {
             continue;
         };
@@ -110,7 +116,11 @@ fn scan_conversation_db(path: &Path) -> anyhow::Result<Vec<SpendEvent>> {
             continue;
         }
         let model = extract_model(&data).unwrap_or_else(|| "gemini".into());
-        let occurred_at = extract_occurred_at(&data).unwrap_or(fallback_at);
+        let occurred_at = step_meta
+            .as_deref()
+            .and_then(extract_occurred_at)
+            .or_else(|| extract_occurred_at(&data))
+            .unwrap_or(fallback_at);
         events.push(SpendEvent {
             event_id: event_id(&["antigravity", &conv_id, &idx.to_string()]),
             source: "antigravity".into(),
@@ -274,7 +284,10 @@ enum ProtoVal {
     Bytes(Vec<u8>),
 }
 
-fn walk_proto(data: &[u8], depth: usize, on_msg: &mut dyn FnMut(&[(u64, u8, ProtoVal)]) -> bool) {
+/// One decoded protobuf field: (field number, wire type, value).
+type ProtoField = (u64, u8, ProtoVal);
+
+fn walk_proto(data: &[u8], depth: usize, on_msg: &mut dyn FnMut(&[ProtoField]) -> bool) {
     if depth > 5 || data.is_empty() {
         return;
     }
@@ -295,7 +308,7 @@ fn walk_proto(data: &[u8], depth: usize, on_msg: &mut dyn FnMut(&[(u64, u8, Prot
     }
 }
 
-fn parse_fields(data: &[u8]) -> Option<Vec<(u64, u8, ProtoVal)>> {
+fn parse_fields(data: &[u8]) -> Option<Vec<ProtoField>> {
     let mut i = 0usize;
     let mut out = Vec::new();
     while i < data.len() {
@@ -423,13 +436,11 @@ mod tests {
             out
         }
         let mut msg = Vec::new();
-        // field 2 = later ts message
         let mut later = vec![0x08];
         later.extend(enc_varint(1_780_594_309));
         msg.push(0x12);
         msg.push(later.len() as u8);
         msg.extend_from_slice(&later);
-        // field 3 = earlier ts message
         let mut earlier = vec![0x08];
         earlier.extend(enc_varint(1_780_594_301));
         msg.push(0x1a);
@@ -437,5 +448,43 @@ mod tests {
         msg.extend_from_slice(&earlier);
         let dt = extract_occurred_at(&msg).unwrap();
         assert_eq!(dt.timestamp(), 1_780_594_301);
+    }
+
+    #[test]
+    fn prefers_step_metadata_timestamp_over_gen_blob() {
+        fn enc_varint(mut v: u64) -> Vec<u8> {
+            let mut out = Vec::new();
+            while v >= 0x80 {
+                out.push((v as u8) | 0x80);
+                v >>= 7;
+            }
+            out.push(v as u8);
+            out
+        }
+        // step metadata: earlier ts
+        let mut step_ts = vec![0x08];
+        step_ts.extend(enc_varint(1_780_594_301));
+        // gen blob: later ts + usage signature nested
+        let usage = vec![
+            0x10, 0xe8, 0x07, // field2 = 1000
+            0x18, 0x32, // field3 = 50
+            0x30, 0x18, // field6 = 24
+        ];
+        let mut later = vec![0x08];
+        later.extend(enc_varint(1_780_594_309));
+        let mut gen = vec![0x0a, later.len() as u8];
+        gen.extend_from_slice(&later);
+        gen.push(0x12);
+        gen.push(usage.len() as u8);
+        gen.extend_from_slice(&usage);
+
+        let step_at = extract_occurred_at(&step_ts).unwrap();
+        let gen_at = extract_occurred_at(&gen).unwrap();
+        assert!(step_at < gen_at);
+        // Priority helper mirrors scan_conversation_db
+        let chosen = extract_occurred_at(&step_ts)
+            .or_else(|| extract_occurred_at(&gen))
+            .unwrap();
+        assert_eq!(chosen, step_at);
     }
 }

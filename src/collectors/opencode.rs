@@ -184,3 +184,43 @@ fn table_has_cols(conn: &Connection, table: &str, expected: &[&str]) -> anyhow::
         .collect();
     Ok(expected.iter().all(|c| cols.iter().any(|col| col == c)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_db_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = OpenCodeCollector::new(PathBuf::from("/no/opencode.db"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+    }
+
+    #[test]
+    fn parses_assistant_tokens() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("opencode.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);
+            CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+            INSERT INTO session VALUES ('s1', '/proj');
+            INSERT INTO message VALUES ('m1', 's1', 1700000000000,
+              '{"role":"assistant","modelID":"gpt-4o","tokens":{"input":3,"output":4},"cost":0.01}');
+            "#,
+        )
+        .unwrap();
+        drop(conn);
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = OpenCodeCollector::new(db).scan(&ledger).unwrap();
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input_tokens, 3);
+        assert_eq!(r.events[0].output_tokens, 4);
+        assert!((r.events[0].cost_usd.unwrap() - 0.01).abs() < 1e-9);
+    }
+}
