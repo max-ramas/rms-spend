@@ -234,3 +234,43 @@ fn timestamp_from_value(v: Option<&serde_json::Value>, fallback: DateTime<Utc>) 
         _ => fallback,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_storage_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = VscodeCopilotCollector::new(PathBuf::from("/no/ws"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+    }
+
+    #[test]
+    fn parses_chat_session_patch() {
+        let dir = TempDir::new().unwrap();
+        let sess = dir
+            .path()
+            .join("ws1")
+            .join("chatSessions");
+        std::fs::create_dir_all(&sess).unwrap();
+        std::fs::write(
+            sess.join("chat1.jsonl"),
+            r#"{"kind":1,"k":["requests",0,"result"],"v":{"metadata":{"promptTokens":15,"outputTokens":4,"resolvedModel":"gpt-4.1","toolCallRounds":[{"timestamp":1700000000000}]}}}
+"#,
+        )
+        .unwrap();
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = VscodeCopilotCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input_tokens, 15);
+        assert_eq!(r.events[0].output_tokens, 4);
+        assert_eq!(r.events[0].model, "gpt-4.1");
+    }
+}

@@ -22,6 +22,7 @@ struct App {
     period: PeriodPreset,
     report: SummaryReport,
     error: Option<String>,
+    budget_line: Option<String>,
 }
 
 pub fn run_tui(paths: &SpendPaths) -> Result<()> {
@@ -80,6 +81,9 @@ fn load_app(paths: &SpendPaths, period: PeriodPreset) -> Result<App> {
         preset: period,
         ..Default::default()
     };
+    let budget_cfg = crate::budget::BudgetConfig::load_or_none(&paths.budget_json)
+        .ok()
+        .flatten();
     match summary_filtered(
         paths,
         &SummaryQuery {
@@ -87,15 +91,20 @@ fn load_app(paths: &SpendPaths, period: PeriodPreset) -> Result<App> {
             ..Default::default()
         },
     ) {
-        Ok(report) => Ok(App {
-            period,
-            report,
-            error: None,
-        }),
+        Ok(report) => {
+            let budget_line = budget_cfg.and_then(|b| b.format_vs_cost(report.cost_usd));
+            Ok(App {
+                period,
+                report,
+                error: None,
+                budget_line,
+            })
+        }
         Err(e) => Ok(App {
             period,
             report: summarize_empty(period),
             error: Some(e.to_string()),
+            budget_line: None,
         }),
     }
 }
@@ -112,18 +121,20 @@ fn draw(frame: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(6),
-            Constraint::Min(6),
+            Constraint::Length(7),
+            Constraint::Min(4),
+            Constraint::Min(3),
             Constraint::Length(1),
         ])
         .split(area);
 
     draw_tabs(chunks[0], app.period, frame);
     draw_totals(chunks[1], app, frame);
-    draw_sources(chunks[2], app, frame);
+    draw_token_sources(chunks[2], app, frame);
+    draw_side_panels(chunks[3], app, frame);
     let footer = Paragraph::new(" q quit · r refresh · 1 Today · 2 Week · 3 Month · 4 All ")
         .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(footer, chunks[3]);
+    frame.render_widget(footer, chunks[4]);
 }
 
 fn draw_tabs(area: Rect, active: PeriodPreset, frame: &mut Frame) {
@@ -163,13 +174,33 @@ fn draw_totals(area: Rect, app: &App, frame: &mut Frame) {
     let mut lines = vec![
         Line::from(format!(
             "Events {}  ·  Tokens {}  ·  in {} / out {}",
-            r.event_count,
+            r.billable_event_count,
             format_tokens_short(r.total_tokens),
             format_tokens_short(r.input_tokens),
             format_tokens_short(r.output_tokens),
         )),
         Line::from(format!("Cost {cost}")),
     ];
+    if r.proxy_event_count > 0 {
+        lines.push(Line::from(format!(
+            "Activity {} sug / {} acc lines",
+            format_tokens_short(r.proxy_suggested_lines),
+            format_tokens_short(r.proxy_accepted_lines),
+        )));
+    }
+    if r.quota_event_count > 0 {
+        lines.push(Line::from(format!(
+            "Quotas {} units ({} snaps)",
+            format_tokens_short(r.quota_units),
+            r.quota_event_count
+        )));
+    }
+    if let Some(b) = &app.budget_line {
+        lines.push(Line::from(Span::styled(
+            b.clone(),
+            Style::default().fg(Color::Cyan),
+        )));
+    }
     if let Some(err) = &app.error {
         lines.push(Line::from(Span::styled(
             err.clone(),
@@ -186,18 +217,15 @@ fn draw_totals(area: Rect, app: &App, frame: &mut Frame) {
     );
 }
 
-fn draw_sources(area: Rect, app: &App, frame: &mut Frame) {
+fn draw_token_sources(area: Rect, app: &App, frame: &mut Frame) {
     let mut rows_data: Vec<_> = app
         .report
         .by_source
         .iter()
-        .filter(|(_, b)| b.events > 0)
+        .filter(|(_, b)| b.events > 0 && !b.is_proxy && !b.is_quota)
         .map(|(src, b)| {
-            let units = if b.is_proxy {
-                b.input_tokens + b.output_tokens
-            } else {
-                b.input_tokens + b.output_tokens + b.cache_read_tokens + b.cache_write_tokens
-            };
+            let units =
+                b.input_tokens + b.output_tokens + b.cache_read_tokens + b.cache_write_tokens;
             (src.clone(), b.events, units, b.cost_usd)
         })
         .collect();
@@ -219,7 +247,7 @@ fn draw_sources(area: Rect, app: &App, frame: &mut Frame) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(18),
+            Constraint::Length(20),
             Constraint::Length(8),
             Constraint::Length(12),
             Constraint::Length(10),
@@ -235,4 +263,67 @@ fn draw_sources(area: Rect, app: &App, frame: &mut Frame) {
             .title(" Active consumers "),
     );
     frame.render_widget(table, area);
+}
+
+fn draw_side_panels(area: Rect, app: &App, frame: &mut Frame) {
+    let mut lines = Vec::new();
+    let proxies: Vec<_> = app
+        .report
+        .by_source
+        .iter()
+        .filter(|(_, b)| b.events > 0 && b.is_proxy)
+        .collect();
+    if !proxies.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Activity (lines)",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for (src, b) in proxies {
+            lines.push(Line::from(format!(
+                "  {}  {} lines · {} ev",
+                crate::labels::source_label(src),
+                format_tokens_short(b.input_tokens + b.output_tokens),
+                b.events
+            )));
+        }
+    }
+    let quotas: Vec<_> = app
+        .report
+        .by_source
+        .iter()
+        .filter(|(_, b)| b.events > 0 && b.is_quota)
+        .collect();
+    if !quotas.is_empty() {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            "Quotas / credits",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for (src, b) in quotas {
+            lines.push(Line::from(format!(
+                "  {}  {} units · {} ev",
+                crate::labels::source_label(src),
+                format_tokens_short(
+                    b.input_tokens + b.output_tokens + b.cache_read_tokens + b.cache_write_tokens
+                ),
+                b.events
+            )));
+        }
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "(no line proxies or quota snaps)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Activity / Quotas "),
+        ),
+        area,
+    );
 }

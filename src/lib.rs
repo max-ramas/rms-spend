@@ -6,6 +6,7 @@
 //! CLI / TUI shells live in the standalone `rms-spend` application, not this crate.
 //! See `SYNC.md` and `scripts/sync-rms-spend-lib.sh`.
 
+pub mod budget;
 pub mod collectors;
 pub mod connectors;
 pub mod event;
@@ -20,6 +21,7 @@ pub mod sync;
 pub mod tariff;
 pub mod tui;
 
+pub use budget::{BudgetConfig, BudgetPeriod};
 pub use connectors::ConnectorConfig;
 pub use event::{Accuracy, CollectorHealth, CollectorStatus, SpendEvent};
 pub use labels::{known_collectors, source_label, source_label_locale};
@@ -27,10 +29,11 @@ pub use ledger::Ledger;
 pub use paths::SpendPaths;
 pub use period::{PeriodFilter, PeriodPreset};
 pub use service::{
-    export_events, export_events_filtered, init_tariffs, load_connectors, refresh_tariff_bundle,
-    reprice_ledger, save_connectors, scan, set_connector_enabled, status, summary,
-    summary_filtered, tray_snapshot, ExportFormat, ScanOptions, ScanReport, StatusReport,
-    SummaryQuery, TraySourceLine, TraySpendSnapshot,
+    export_events, export_events_filtered, init_spend, init_tariffs, load_connectors,
+    refresh_tariff_bundle, reprice_ledger, save_connectors, scan, set_connector_enabled,
+    set_connector_network, status, summary, summary_filtered, tray_snapshot, ExportFormat,
+    InitReport, ScanOptions, ScanReport, StatusReport, SummaryQuery, TraySourceLine,
+    TraySpendSnapshot,
 };
 pub use summary::{Bucket, SummaryReport};
 pub use sync::{

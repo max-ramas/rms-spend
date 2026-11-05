@@ -26,6 +26,9 @@ pub const KNOWN_COLLECTORS: &[&str] = &[
 pub struct ConnectorConfig {
     /// collector_id → enabled
     pub enabled: BTreeMap<String, bool>,
+    /// collector_id → allow outbound network (e.g. Windsurf GetUserStatus). Default off.
+    #[serde(default)]
+    pub allow_network: BTreeMap<String, bool>,
 }
 
 impl Default for ConnectorConfig {
@@ -36,16 +39,16 @@ impl Default for ConnectorConfig {
             let on = *id != "cursor_quota" && *id != "windsurf";
             enabled.insert((*id).to_string(), on);
         }
-        Self { enabled }
+        Self {
+            enabled,
+            allow_network: BTreeMap::new(),
+        }
     }
 }
 
 impl ConnectorConfig {
     pub fn load_or_default(path: &Path) -> Self {
-        match Self::load(path) {
-            Ok(c) => c,
-            Err(_) => Self::default(),
-        }
+        Self::load(path).unwrap_or_default()
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -53,9 +56,7 @@ impl ConnectorConfig {
         let mut cfg: ConnectorConfig = serde_json::from_str(&raw)?;
         for id in KNOWN_COLLECTORS {
             let default_on = *id != "cursor_quota" && *id != "windsurf";
-            cfg.enabled
-                .entry((*id).to_string())
-                .or_insert(default_on);
+            cfg.enabled.entry((*id).to_string()).or_insert(default_on);
         }
         Ok(cfg)
     }
@@ -75,6 +76,14 @@ impl ConnectorConfig {
 
     pub fn set_enabled(&mut self, id: &str, on: bool) {
         self.enabled.insert(id.to_string(), on);
+    }
+
+    pub fn network_allowed(&self, id: &str) -> bool {
+        self.allow_network.get(id).copied().unwrap_or(false)
+    }
+
+    pub fn set_network_allowed(&mut self, id: &str, on: bool) {
+        self.allow_network.insert(id.to_string(), on);
     }
 }
 

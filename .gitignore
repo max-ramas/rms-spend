@@ -3,3 +3,14 @@
 *.db-*
 .DS_Store
 .env
+
+# RMS Memory Agent Rules
+/.cursorrules
+/.clinerules
+/.github/copilot-instructions.md
+/AGENTS.md
+/GEMINI.md
+
+# RMS Memory Agent Rules
+/CLAUDE.md
+/.zed/assistant.md

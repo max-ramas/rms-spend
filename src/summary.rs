@@ -23,6 +23,9 @@ pub struct SummaryReport {
     pub proxy_suggested_lines: u64,
     pub proxy_accepted_lines: u64,
     pub proxy_event_count: usize,
+    /// Quota / credit units (`accuracy=quota`) — not API tokens.
+    pub quota_units: u64,
+    pub quota_event_count: usize,
     pub billable_event_count: usize,
     /// Sum of known `cost_usd` (never invents price for proxy/unknown models).
     pub cost_usd: Option<f64>,
@@ -45,6 +48,8 @@ pub struct Bucket {
     pub cost_usd: Option<f64>,
     /// True when this bucket mixes proxy line metrics (print carefully).
     pub is_proxy: bool,
+    /// True when this bucket is quota/credit units (not API tokens).
+    pub is_quota: bool,
 }
 
 impl Bucket {
@@ -52,6 +57,9 @@ impl Bucket {
         self.events += 1;
         if e.accuracy == Accuracy::Proxy {
             self.is_proxy = true;
+        }
+        if e.accuracy == Accuracy::Quota {
+            self.is_quota = true;
         }
         self.input_tokens += e.input_tokens;
         self.output_tokens += e.output_tokens;
@@ -71,10 +79,16 @@ impl Bucket {
     fn units_label_total(&self) -> u64 {
         self.input_tokens + self.output_tokens + self.cache_read_tokens + self.cache_write_tokens
     }
-}
 
-fn is_billable(a: Accuracy) -> bool {
-    matches!(a, Accuracy::Exact | Accuracy::Estimated)
+    fn unit_name(&self) -> &'static str {
+        if self.is_proxy {
+            "lines"
+        } else if self.is_quota {
+            "quota"
+        } else {
+            "tokens"
+        }
+    }
 }
 
 pub fn summarize(events: &[SpendEvent]) -> SummaryReport {
@@ -90,6 +104,8 @@ pub fn summarize(events: &[SpendEvent]) -> SummaryReport {
     let mut proxy_suggested = 0u64;
     let mut proxy_accepted = 0u64;
     let mut proxy_events = 0usize;
+    let mut quota_units = 0u64;
+    let mut quota_events = 0usize;
     let mut billable_events = 0usize;
     let mut cost_sum = 0.0;
     let mut cost_known = 0usize;
@@ -101,7 +117,7 @@ pub fn summarize(events: &[SpendEvent]) -> SummaryReport {
         min_ts = Some(min_ts.map_or(e.occurred_at, |m| m.min(e.occurred_at)));
         max_ts = Some(max_ts.map_or(e.occurred_at, |m| m.max(e.occurred_at)));
 
-        if is_billable(e.accuracy) {
+        if e.accuracy.is_billable() {
             billable_events += 1;
             input += e.input_tokens;
             output += e.output_tokens;
@@ -111,6 +127,9 @@ pub fn summarize(events: &[SpendEvent]) -> SummaryReport {
             proxy_events += 1;
             proxy_suggested += e.input_tokens;
             proxy_accepted += e.output_tokens;
+        } else if e.accuracy == Accuracy::Quota {
+            quota_events += 1;
+            quota_units += e.input_tokens + e.output_tokens;
         }
 
         match e.cost_usd {
@@ -148,6 +167,8 @@ pub fn summarize(events: &[SpendEvent]) -> SummaryReport {
         proxy_suggested_lines: proxy_suggested,
         proxy_accepted_lines: proxy_accepted,
         proxy_event_count: proxy_events,
+        quota_units,
+        quota_event_count: quota_events,
         billable_event_count: billable_events,
         cost_usd: if cost_known > 0 { Some(cost_sum) } else { None },
         cost_known_events: cost_known,
@@ -174,8 +195,11 @@ pub fn print_table(report: &SummaryReport) {
         println!("Data:      {from} → {to}");
     }
     println!(
-        "Events:    {} ({} billable, {} proxy)",
-        report.event_count, report.billable_event_count, report.proxy_event_count
+        "Events:    {} ({} billable, {} proxy, {} quota)",
+        report.event_count,
+        report.billable_event_count,
+        report.proxy_event_count,
+        report.quota_event_count
     );
     println!(
         "Tokens:    {} in / {} out / {} cache-read / {} cache-write",
@@ -190,8 +214,14 @@ pub fn print_table(report: &SummaryReport) {
     );
     if report.proxy_event_count > 0 {
         println!(
-            "Proxy:     {} suggested / {} accepted lines (Cursor — not tokens)",
+            "Activity:  {} suggested / {} accepted lines (Cursor — not tokens)",
             report.proxy_suggested_lines, report.proxy_accepted_lines
+        );
+    }
+    if report.quota_event_count > 0 {
+        println!(
+            "Quotas:    {} units across {} snapshot(s) (not tokens)",
+            report.quota_units, report.quota_event_count
         );
     }
     match report.cost_usd {
@@ -217,31 +247,29 @@ pub fn print_table(report: &SummaryReport) {
         println!("{}", parts.join(", "));
     }
     println!();
-    println!("Active consumers:");
-    let mut sources: Vec<_> = report
-        .by_source
-        .iter()
-        .filter(|(_, b)| b.events > 0)
-        .collect();
-    sources.sort_by(|a, b| {
-        b.1.units_label_total()
-            .cmp(&a.1.units_label_total())
-            .then_with(|| a.0.cmp(b.0))
-    });
-    if sources.is_empty() {
-        println!("  (none)");
-    } else {
-        for (k, b) in sources {
-            let unit = if b.is_proxy { "units" } else { "tokens" };
-            println!(
-                "  {:<22} events={:<5} {unit}={:<10} cost={}",
-                crate::labels::source_label(k),
-                b.events,
-                b.units_label_total(),
-                format_cost(b.cost_usd)
-            );
-        }
-    }
+
+    print_source_section(
+        "Active consumers (tokens):",
+        report
+            .by_source
+            .iter()
+            .filter(|(_, b)| b.events > 0 && !b.is_proxy && !b.is_quota),
+    );
+    print_source_section(
+        "Activity (lines / proxies):",
+        report
+            .by_source
+            .iter()
+            .filter(|(_, b)| b.events > 0 && b.is_proxy),
+    );
+    print_source_section(
+        "Quotas / credits:",
+        report
+            .by_source
+            .iter()
+            .filter(|(_, b)| b.events > 0 && b.is_quota),
+    );
+
     println!();
     println!("By model:");
     let mut models: Vec<_> = report
@@ -258,10 +286,10 @@ pub fn print_table(report: &SummaryReport) {
         println!("  (none)");
     } else {
         for (k, b) in models {
-            let unit = if b.is_proxy { "units" } else { "tokens" };
             println!(
-                "  {k:<40} events={:<5} {unit}={:<10} cost={}",
+                "  {k:<40} events={:<5} {}={:<10} cost={}",
                 b.events,
+                b.unit_name(),
                 b.units_label_total(),
                 format_cost(b.cost_usd)
             );
@@ -271,15 +299,42 @@ pub fn print_table(report: &SummaryReport) {
         println!();
         println!("By day (UTC):");
         for (k, b) in report.by_day.iter().filter(|(_, b)| b.events > 0) {
-            let unit = if b.is_proxy { "units" } else { "tokens" };
             println!(
-                "  {k}  events={:<5} {unit}={:<10} cost={}",
+                "  {k}  events={:<5} {}={:<10} cost={}",
                 b.events,
+                b.unit_name(),
                 b.units_label_total(),
                 format_cost(b.cost_usd)
             );
         }
     }
+}
+
+fn print_source_section<'a, I>(title: &str, iter: I)
+where
+    I: Iterator<Item = (&'a String, &'a Bucket)>,
+{
+    let mut sources: Vec<_> = iter.collect();
+    if sources.is_empty() {
+        return;
+    }
+    sources.sort_by(|a, b| {
+        b.1.units_label_total()
+            .cmp(&a.1.units_label_total())
+            .then_with(|| a.0.cmp(b.0))
+    });
+    println!("{title}");
+    for (k, b) in sources {
+        println!(
+            "  {:<22} events={:<5} {}={:<10} cost={}",
+            crate::labels::source_label(k),
+            b.events,
+            b.unit_name(),
+            b.units_label_total(),
+            format_cost(b.cost_usd)
+        );
+    }
+    println!();
 }
 
 fn format_cost(c: Option<f64>) -> String {
@@ -339,5 +394,18 @@ mod tests {
         assert_eq!(r.billable_event_count, 1);
         assert_eq!(r.proxy_event_count, 1);
         assert!((r.cost_usd.unwrap() - 0.01).abs() < 1e-9);
+    }
+
+    #[test]
+    fn quota_does_not_inflate_token_totals() {
+        let events = vec![
+            ev(Accuracy::Exact, 10, 5, Some(0.02)),
+            ev(Accuracy::Quota, 0, 99, None),
+        ];
+        let r = summarize(&events);
+        assert_eq!(r.total_tokens, 15);
+        assert_eq!(r.quota_units, 99);
+        assert_eq!(r.quota_event_count, 1);
+        assert_eq!(r.billable_event_count, 1);
     }
 }

@@ -274,3 +274,45 @@ struct ModelStats {
     cached_tokens: Option<u64>,
     thoughts_tokens: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_home_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = QwenCodeCollector::new(PathBuf::from("/no/qwen"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+    }
+
+    #[test]
+    fn parses_usage_record_and_chat() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("usage_record.jsonl"),
+            r#"{"session_id":"s1","timestamp":1700000000000,"project":"p","models":{"qwen-max":{"inputTokens":9,"outputTokens":1}}}
+"#,
+        )
+        .unwrap();
+        let chat_dir = dir.path().join("projects/demo/chats");
+        std::fs::create_dir_all(&chat_dir).unwrap();
+        std::fs::write(
+            chat_dir.join("c1.jsonl"),
+            r#"{"uuid":"u1","session_id":"s2","timestamp":"2026-01-01T00:00:00Z","type":"system","subtype":"ui_telemetry","systemPayload":{"uiEvent":{"event.name":"qwen-code.api_response","response_id":"r1","model":"qwen-plus","input_token_count":2,"output_token_count":3}}}
+"#,
+        )
+        .unwrap();
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = QwenCodeCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert!(r.events.len() >= 2);
+        assert!(r.events.iter().any(|e| e.input_tokens == 9));
+        assert!(r.events.iter().any(|e| e.input_tokens == 2));
+    }
+}

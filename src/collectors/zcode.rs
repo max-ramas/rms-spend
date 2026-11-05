@@ -161,3 +161,39 @@ struct UsageBlock {
     cache_read_tokens: Option<u64>,
     cache_write_tokens: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::Ledger;
+    use tempfile::TempDir;
+
+    #[test]
+    fn missing_dir_ok() {
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = ZCodeCollector::new(PathBuf::from("/no/zcode"))
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.status, CollectorStatus::Ok);
+    }
+
+    #[test]
+    fn parses_model_io() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("model-io-1.jsonl");
+        std::fs::write(
+            &f,
+            r#"{"completedAt":"2026-03-01T00:00:00Z","requestId":"r1","model":{"modelId":"gpt-4.1"},"response":{"usage":{"inputTokens":11,"outputTokens":7,"cacheReadTokens":1}}}
+"#,
+        )
+        .unwrap();
+        let ledger = Ledger::open_in_memory().unwrap();
+        let r = ZCodeCollector::new(dir.path().to_path_buf())
+            .scan(&ledger)
+            .unwrap();
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input_tokens, 11);
+        assert_eq!(r.events[0].output_tokens, 7);
+        assert_eq!(r.events[0].model, "gpt-4.1");
+    }
+}
