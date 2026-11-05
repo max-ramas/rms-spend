@@ -4,6 +4,13 @@ Local **IDE-native** AI token spend tracker. Reads official on-disk artifacts fr
 
 SQLite (`~/.rms-memory/spend.db`) is the single source of truth. Collectors normalize raw logs into the ledger. The same crate powers the CLI, the interactive TUI, and the **Spend** tab + tray menu in [rms-memory-gui](../rms-memory-gui).
 
+> ### 🔒 Privacy promise
+> RMS does **not** collect your data or usage statistics. Your token ledger and the logs of your
+> coding tools are read and stored only on your computer, and RMS Spend has no analytics, no
+> telemetry, no license check and no update ping. Cloud sync of spend is **off by default**; if you
+> switch it on yourself, it sends only what you chose to sync, to the service address you set.
+> If an online service is ever introduced, we will tell you clearly beforehand.
+
 ## Status
 
 **Local + cloud MVP delivered:**
