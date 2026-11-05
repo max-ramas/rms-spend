@@ -7,17 +7,15 @@ SQLite (`~/.rms-memory/spend.db`) is the single source of truth. Collectors norm
 > ### 🔒 Privacy promise
 > RMS does **not** collect your data or usage statistics. Your token ledger and the logs of your
 > coding tools are read and stored only on your computer, and RMS Spend has no analytics, no
-> telemetry, no license check and no update ping. Cloud sync of spend is **off by default**; if you
-> switch it on yourself, it sends only what you chose to sync, to the service address you set.
+> telemetry, no license check and no update ping. Network connectors are **off by default**.
 > If an online service is ever introduced, we will tell you clearly beforehand.
 
 ## Status
 
-**Local + cloud MVP delivered:**
+**Local MVP delivered:**
 - Local CLI/library ledger, tariffs `0.2.0-builtin`, connectors, period filters, TUI
-- GUI: Spend tab (period chips, active consumers, connector management, cloud sync)
+- GUI: Spend tab (period chips, active consumers, connector management)
 - Tray menu (icon only — no menu-bar title text): totals + active sources + Open Spend
-- Opt-in cloud sync via [`rms-spend-service`](../rms-spend-service)
 - Zed zstd JSON token decode; Antigravity step+gen timestamps; Windsurf cache + opt-in GetUserStatus RPC
 - `Accuracy::Quota` for Cursor Quota / Windsurf (excluded from token Totals); Cursor proxy labeled **Cursor (lines)**
 - Foreground `watch`, optional USD `budget`, `init` onboarding
@@ -91,14 +89,6 @@ rms-spend refresh-tariffs --url https://…   # remote bundle + reprice
 rms-spend connector cursor_proxy --disable
 rms-spend connector antigravity --enable
 rms-spend connector windsurf --enable --allow-network
-
-# Cloud sync (opt-in)
-rms-spend init-sync
-# Optional HMAC attestation (must match service REGISTER_HMAC_SECRET):
-#   export RMS_SPEND_REGISTER_SECRET=…
-#   # or set registerSecret in spend-sync.json
-rms-spend register --api-base http://localhost:8080/api/v1
-rms-spend sync --refresh-tariffs
 ```
 
 ## Collectors
@@ -157,13 +147,11 @@ Used by: CLI `summary` / `export`, TUI, GUI Spend chips, tray snapshot (today/we
 
 ## Privacy
 
-Local-only by default. Sync sends **metadata only**: tokens, model, timestamps, cost — never prompts, code, or transcripts.
+Local-only by default: the ledger and tool logs never leave your computer. No analytics, telemetry, license check or update ping. The Windsurf live-credits connector (`--network`) is off by default and talks to Windsurf's own service only when you enable it; Cursor quota is read from local files.
 
 ## Design notes
 
 - Library + CLI: this repo. GUI adapters: `rms-memory-gui` (`commands/spend.rs`, `spend_tray.rs`, `Spend.tsx`).
-- Cloud service: [`rms-spend-service`](../rms-spend-service)
-- Public leaderboard: `https://spend.rms-ds.com/api/v1/leaderboard`
 - Split runbook: `docs/SPLIT.md`
 
 ## 📄 License

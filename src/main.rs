@@ -162,6 +162,7 @@ enum Commands {
     },
 
     /// Opt-in cloud sync to rms-spend-service (requires spend-sync.json)
+    #[command(hide = true)]
     Sync {
         /// Override visibility for uploaded events: private|team|public
         #[arg(long, default_value = "private")]
@@ -176,6 +177,7 @@ enum Commands {
     },
 
     /// Register a new account on rms-spend-service and write api_key to spend-sync.json
+    #[command(hide = true)]
     Register {
         /// Base URL of spend-service (default: https://spend.rms-ds.com/api/v1)
         #[arg(long, env = "RMS_SPEND_API_BASE")]
@@ -183,6 +185,7 @@ enum Commands {
     },
 
     /// Write a template spend-sync.json
+    #[command(hide = true)]
     InitSync,
 }
 
@@ -324,7 +327,6 @@ fn main() -> anyhow::Result<()> {
             println!("  rms-spend connector <id> --enable   # e.g. windsurf, cursor_quota");
             println!("  rms-spend connector windsurf --allow-network   # opt-in live credits");
             println!("  rms-spend budget set --usd 50 --period month");
-            println!("  rms-spend init-sync   # optional cloud sync");
         }
         Commands::Scan {
             claude_projects,
